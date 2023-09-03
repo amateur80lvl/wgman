@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+'''
+Wireguard configuration management suite.
+
+Copyright 2019-2023 amateur80lvl
+License: BSD, see LICENSE for details.
+'''
+
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import yaml
+
+if len(sys.argv) < 3:
+    print("Usage: create-client <server name> <client name>")
+    sys.exit(1)
+
+server = sys.argv[1]
+client = sys.argv[2]
+
+cwd = os.getcwd()
+try:
+    os.chdir(Path(sys.argv[0]).parent / server)
+
+    config = yaml.safe_load(
+        Path('config.yaml').read_text()
+    )
+
+    # read IP address map
+    ipaddr_map_path = Path('ipaddr-map')
+    if ipaddr_map_path.exists():
+        ipaddr_map = dict(line.split() for line in ipaddr_map_path.read_text().strip().splitlines())
+    else:
+        ipaddr_map = {}
+
+    # cast an IP address for the client
+    used_addresses = set(ipaddr_map.values())
+    ipaddr = config['client_address_start']
+    while str(ipaddr) in used_addresses:
+        ipaddr += 1
+    if ipaddr > 254:
+        raise Exception('Address space exhausted')
+    ipaddr_map[client] = str(ipaddr)
+    client_ipaddr = '.'.join(config['subnet'].split('.')[:3] + [str(ipaddr)])
+
+    # generate client keys
+    result = subprocess.run(['wg', 'genkey'], check=True, capture_output=True, text=True)
+    client_private_key = result.stdout
+
+    Path(client + '.private-key').write_text(client_private_key)
+
+    result = subprocess.run(['wg', 'pubkey'], check=True, capture_output=True, input=client_private_key, text=True)
+    client_public_key = result.stdout
+
+    Path(client + '.public-key').write_text(client_public_key)
+
+    if config['use_preshared_key']:
+        result = subprocess.run(['wg', 'genpsk'], check=True, capture_output=True, text=True)
+        preshared_key = result.stdout
+
+        Path(client + '.preshared-key').write_text(preshared_key)
+
+    # save address map
+    with open(ipaddr_map_path, 'w') as f:
+        for c, a in sorted(ipaddr_map.items(), key=lambda v: v[1]):
+            f.write(f'{c} {a}\n')
+
+    # make configurations
+    subprocess.run(f'../make-client-conf {server} {client}', shell=True, check=True)
+    subprocess.run(f'../make-server-conf {server}', shell=True, check=True)
+
+finally:
+    os.chdir(cwd)

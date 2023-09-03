@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+'''
+Wireguard configuration management suite.
+
+Copyright 2019-2023 amateur80lvl
+License: BSD, see LICENSE for details.
+'''
+
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import yaml
+
+if len(sys.argv) < 2:
+    print("Usage: create-server <server name>")
+    sys.exit(1)
+
+server = sys.argv[1]
+
+config_path = Path(server, 'config.yaml')
+if not config_path.exists():
+    print(f'Please create `{server}` directory and prepare config.yaml in it')
+    sys.exit(1)
+
+config = yaml.safe_load(
+    config_path.read_text()
+)
+
+cwd = os.getcwd()
+try:
+    os.chdir(Path(sys.argv[0]).parent / server)
+
+    # generate server keys
+    result = subprocess.run(['wg', 'genkey'], check=True, capture_output=True, text=True)
+    server_private_key = result.stdout
+
+    Path('private-key').write_text(server_private_key)
+
+    result = subprocess.run(['wg', 'pubkey'], check=True, capture_output=True, input=server_private_key, text=True)
+    server_public_key = result.stdout
+
+    Path('public-key').write_text(server_public_key)
+
+    # make configuration
+    subprocess.run(f'../make-server-conf {server}', shell=True, check=True)
+
+finally:
+    os.chdir(cwd)

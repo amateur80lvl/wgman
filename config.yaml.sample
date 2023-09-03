@@ -1,0 +1,14 @@
+# sample configuration file
+
+subnet: 10.10.0.0
+subnet_bits: 24
+server_private_address: 10.10.0.1
+client_address_start: 2
+
+server_public_address: 1.2.3.4
+server_port: 443
+
+use_preshared_key: true
+
+default_route: true
+dns: 1.1.1.1

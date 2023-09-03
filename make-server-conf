@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+'''
+Wireguard configuration management suite.
+
+Copyright 2019-2023 amateur80lvl
+License: BSD, see LICENSE for details.
+'''
+
+from pathlib import Path
+import os
+import sys
+from textwrap import dedent
+
+import yaml
+
+if len(sys.argv) < 2:
+    print("Usage: make-server-conf <server name>")
+    sys.exit(1)
+
+server = sys.argv[1]
+
+cwd = os.getcwd()
+try:
+    os.chdir(Path(sys.argv[0]).parent / server)
+
+    config = yaml.safe_load(
+        Path('config.yaml').read_text()
+    )
+
+    server_wg_conf = Path('wg0.conf')
+    server_private_key = Path('private-key').read_text().strip()
+
+    # read IP address map
+    ipaddr_map_path = Path('ipaddr-map')
+    if ipaddr_map_path.exists():
+        ipaddr_map = dict(line.split() for line in ipaddr_map_path.read_text().strip().splitlines())
+    else:
+        ipaddr_map = {}
+
+    # generate server configuration
+    with open(server_wg_conf, 'w') as f:
+        f.write(dedent(f'''
+            [Interface]
+            PrivateKey = {server_private_key}  # server private key
+            ListenPort = {config['server_port']}
+            Address = {config['server_private_address']}
+        ''').lstrip())
+
+        for client_pubkey_filename in Path('.').glob('*.public-key'):
+            client = client_pubkey_filename.stem
+            client_ipaddr = '.'.join(config['subnet'].split('.')[:3] + [ipaddr_map[client]])
+            client_public_key = client_pubkey_filename.read_text().strip()
+
+            if config['use_preshared_key']:
+                client_psk = Path(client + '.preshared-key').read_text().strip()
+                client_preshared_key = f'PresharedKey = {client_psk}'
+            else:
+                client_preshared_key = ''
+
+            f.write(dedent(f'''
+                [Peer]
+                PublicKey = {client_public_key}  # {client} public key
+                AllowedIPs = {client_ipaddr}/32  # {client} IP address
+                {client_preshared_key}
+            '''))
+
+finally:
+    os.chdir(cwd)

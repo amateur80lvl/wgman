@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+'''
+Wireguard configuration management suite.
+
+Copyright 2019-2023 amateur80lvl
+License: BSD, see LICENSE for details.
+'''
+
+from base64 import b64encode
+import io
+import os
+from pathlib import Path
+import socket
+import sys
+from textwrap import dedent
+
+import yaml
+import qrcode
+import qrcode.image.svg
+
+if len(sys.argv) < 3:
+    print("Usage: make-client-conf <server name> <client name>")
+    sys.exit(1)
+
+server = sys.argv[1]
+client = sys.argv[2]
+
+cwd = os.getcwd()
+try:
+    os.chdir(Path(sys.argv[0]).parent / server)
+
+    config = yaml.safe_load(
+        Path('config.yaml').read_text()
+    )
+
+    # read IP address map
+    ipaddr_map_path = Path('ipaddr-map')
+    if ipaddr_map_path.exists():
+        ipaddr_map = dict(line.split() for line in ipaddr_map_path.read_text().strip().splitlines())
+    else:
+        ipaddr_map = {}
+
+    client_ipaddr = '.'.join(config['subnet'].split('.')[:3] + [ipaddr_map[client]])
+
+    # generate client configuration
+    client_wg_conf = Path(client + '.conf')
+
+    client_private_key = Path(client + '.private-key').read_text().strip()
+    server_public_key = Path('public-key').read_text().strip()
+
+    if config['use_preshared_key']:
+        client_psk = Path(client + '.preshared-key').read_text().strip()
+        client_preshared_key = f'PresharedKey = {client_psk}'
+    else:
+        client_preshared_key = ''
+
+    if config.get('dns', False):
+        dns = f"DNS = {config['dns']}"
+    else:
+        dns = ''
+
+    if config['default_route']:
+        default_route = 'AllowedIPs = 0.0.0.0/0  # default route'
+    else:
+        default_route = f'AllowedIPs = {config["server_private_address"]}/{config.get("subnet_bits", 32)}  # route to the server'
+
+    client_config = dedent(f'''
+        [Interface]
+        PrivateKey = {client_private_key}  # client private key
+        Address = {client_ipaddr}/32
+        {dns}
+
+        [Peer]
+        Endpoint = {config['server_public_address']}:{config['server_port']}
+        PublicKey = {server_public_key}  # server public key
+        PersistentKeepalive = 15  # we need this if we're behind a firewall
+        {default_route}
+        {client_preshared_key}
+    ''').lstrip()
+
+    # save client config
+    client_wg_conf.write_text(client_config)
+
+    # generate QR code
+    qr = qrcode.QRCode(
+        box_size = 1,
+        border = 0,
+        error_correction = qrcode.constants.ERROR_CORRECT_L
+    )
+    qr.add_data(client_config)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color=0, back_color=1)
+
+    with io.BytesIO() as f:
+        img.save(f, 'GIF', palette=b'\x00\x00\x00\xff\xff\xff', transparency=1)
+        image_data = b64encode(f.getvalue()).decode('ascii')
+
+    img = f'<img src="data:image/gif;base64,{image_data}">'
+
+    html = dedent(f'''
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+            <style>
+                img {{ image-rendering: pixelated; height: 90vh; width: 90vw; object-fit: contain; }}
+            </style>
+        </head>
+        <body>
+            {img}
+            <pre>{client_config}</pre>
+        </body>
+        </html>
+    ''')
+
+    Path(client + '.html').write_text(html)
+
+finally:
+    os.chdir(cwd)
