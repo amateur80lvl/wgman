@@ -16,7 +16,6 @@ from textwrap import dedent
 
 import yaml
 import qrcode
-import qrcode.image.svg
 
 if len(sys.argv) < 3:
     print("Usage: make-client-conf <server name> <client name>")
